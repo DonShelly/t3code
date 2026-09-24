@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Windows path math must run on every host.
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -37,6 +39,7 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityProfileDirectory,
+  resolveAntigravityRuntimeTempDirectory,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -259,6 +262,46 @@ describe("Antigravity process environment", () => {
     expect(
       resolveAntigravityProfileDirectory("/userdata", ProviderInstanceId.make("antigravity")),
     ).toBe(first);
+  });
+
+  it("keeps the unpacked Windows runtime under MAX_PATH for long user names", () => {
+    // Deepest member of the official agy_acp_server_1.1.1 windows-x86_64 bundle.
+    const deepestMember =
+      "google3\\cloud\\developer_experience\\antigravity_extensions\\acp_server\\_private__agy_acp_server_bin.lazy_imports_info.json";
+    const home = "C:\\Users\\a-twenty-char-person";
+    // Normalize separators: the profile resolver joins with the host's path module.
+    const profileDirectory = NodePath.win32.normalize(
+      resolveAntigravityProfileDirectory(
+        NodePath.win32.join(home, ".t3", "userdata"),
+        ProviderInstanceId.make("antigravity"),
+      ),
+    );
+    const extracted = (tempDirectory: string) =>
+      NodePath.win32.join(tempDirectory, "run-AbC123", "_MEI000012ab2", deepestMember);
+
+    const root = resolveAntigravityRuntimeTempDirectory(
+      profileDirectory,
+      "win32",
+      NodePath.win32.join(home, "AppData", "Local", "Temp"),
+    );
+    // MAX_PATH is 260 including the terminating NUL.
+    expect(extracted(root).length).toBeLessThan(260);
+    expect(
+      extracted(NodePath.win32.join(profileDirectory, "antigravity-acp", "tmp")).length,
+    ).toBeGreaterThanOrEqual(260);
+    expect(
+      resolveAntigravityRuntimeTempDirectory(
+        resolveAntigravityProfileDirectory("C:\\state", ProviderInstanceId.make("Antigravity")),
+        "win32",
+        "C:\\Temp",
+      ),
+    ).not.toBe(
+      resolveAntigravityRuntimeTempDirectory(
+        resolveAntigravityProfileDirectory("C:\\state", ProviderInstanceId.make("antigravity")),
+        "win32",
+        "C:\\Temp",
+      ),
+    );
   });
 });
 

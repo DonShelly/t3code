@@ -10,6 +10,7 @@ import {
   HostProcessExecutablePath,
   HostProcessIsExecutable,
   HostProcessPlatform,
+  HostProcessTempDirectory,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -475,7 +476,11 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        const tempRoot = resolveAntigravityRuntimeTempDirectory(h.profileDirectory);
+        const tempRoot = resolveAntigravityRuntimeTempDirectory(
+          h.profileDirectory,
+          hostPlatform,
+          yield* HostProcessTempDirectory,
+        );
         yield* h.refresh();
         yield* h.refresh();
         const directories = h.launches.flatMap((launch) =>
@@ -490,20 +495,30 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "removes runtime temp directories left by a previous server on create",
-    () =>
+  // Posix host paths stand in for Windows ones: only the root choice differs.
+  it.effect.each(["linux", "win32"] as const)(
+    "removes runtime temp directories left by a previous server on create (%s)",
+    (platform) =>
       Effect.gen(function* () {
+        if (windowsHost) return;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const config = yield* ServerConfig;
-        const instanceId = ProviderInstanceId.make("antigravity-orphan-sweep");
+        const systemTemp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-system-temp-" });
+        const instanceId = ProviderInstanceId.make(`antigravity-orphan-sweep-${platform}`);
+        const profileDirectory = resolveAntigravityProfileDirectory(config.stateDir, instanceId);
         const tempRoot = resolveAntigravityRuntimeTempDirectory(
-          resolveAntigravityProfileDirectory(config.stateDir, instanceId),
+          profileDirectory,
+          platform,
+          systemTemp,
         );
-        const orphan = path.join(tempRoot, "run-orphan", "_MEI123", "google3");
-        yield* fs.makeDirectory(orphan, { recursive: true });
-        yield* fs.writeFileString(path.join(orphan, "payload.bin"), "stale");
+        // Windows unpacked under the profile before the root moved to the system temp.
+        const legacyRoot = path.join(profileDirectory, "antigravity-acp", "tmp");
+        for (const root of [tempRoot, legacyRoot]) {
+          const orphan = path.join(root, "run-orphan", "_MEI123", "google3");
+          yield* fs.makeDirectory(orphan, { recursive: true });
+          yield* fs.writeFileString(path.join(orphan, "payload.bin"), "stale");
+        }
         yield* AntigravityDriver.create({
           instanceId,
           displayName: "Sweep",
@@ -518,8 +533,12 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
               acquire: () => Effect.die("unused"),
             }),
           ),
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(HostProcessTempDirectory, systemTemp),
         );
         expect(yield* fs.exists(tempRoot)).toBe(false);
+        expect(yield* fs.exists(legacyRoot)).toBe(false);
+        expect(yield* fs.exists(systemTemp)).toBe(true);
       }).pipe(Effect.scoped),
   );
 

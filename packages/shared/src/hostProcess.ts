@@ -39,6 +39,13 @@ export const HostProcessWorkingDirectory = Context.Reference<string>(
   },
 );
 
+export const HostProcessTempDirectory = Context.Reference<string>(
+  "@t3tools/shared/hostProcess/HostProcessTempDirectory",
+  {
+    defaultValue: () => NodeOS.tmpdir(),
+  },
+);
+
 export const HostProcessExecutablePath = Context.Reference<string>(
   "@t3tools/shared/hostProcess/HostProcessExecutablePath",
   {

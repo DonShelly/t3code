@@ -477,6 +477,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           platform,
           baseEnv: environment,
         });
+        // Windows keeps runtime temp outside the profile. Remove it after the
+        // process exits; this profile, and so its temp directory, is unique.
+        yield* Effect.addFinalizer(() =>
+          fs.remove(profile.tempDirectory, { recursive: true, force: true }).pipe(Effect.ignore),
+        );
         const runtime = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,

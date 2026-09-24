@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform, HostProcessTempDirectory } from "@t3tools/shared/hostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -194,9 +194,21 @@ export function resolveAntigravityProfileDirectory(
   return NodePath.join(stateDir, "providers", "antigravity", directoryName);
 }
 
-/** Parent of the per-process runtime temp directories inside a profile. */
-export function resolveAntigravityRuntimeTempDirectory(profileDirectory: string): string {
-  return NodePath.join(profileDirectory, "antigravity-acp", "tmp");
+/**
+ * Parent of the per-process runtime temp directories. On Windows the agent
+ * unpacks members up to 120 characters deep, and a profile nested under the
+ * state directory pushes them past MAX_PATH, so the bootloader exits before
+ * ACP starts. A short T3-owned directory in the system temp keeps them under
+ * it; the profile hash keeps instances apart.
+ */
+export function resolveAntigravityRuntimeTempDirectory(
+  profileDirectory: string,
+  platform: NodeJS.Platform,
+  systemTempDirectory: string,
+): string {
+  if (platform !== "win32") return NodePath.join(profileDirectory, "antigravity-acp", "tmp");
+  const scope = NodeCrypto.createHash("sha256").update(profileDirectory).digest("hex").slice(0, 12);
+  return NodePath.join(systemTempDirectory, "t3-agy", scope);
 }
 
 function quoteBrowserArgument(value: string): string {
@@ -337,7 +349,11 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
-  const tempDirectory = resolveAntigravityRuntimeTempDirectory(geminiHome);
+  const tempDirectory = resolveAntigravityRuntimeTempDirectory(
+    geminiHome,
+    platform,
+    yield* HostProcessTempDirectory,
+  );
   const profile: AntigravityProfile = {
     platform,
     geminiHome,

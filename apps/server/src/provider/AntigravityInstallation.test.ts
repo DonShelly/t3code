@@ -5,6 +5,7 @@ import {
   HostProcessEnvironment,
   HostProcessIsExecutable,
   HostProcessPlatform,
+  HostProcessTempDirectory,
 } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -332,6 +333,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       );
       const methods: string[] = [];
       const profiles = new Set<string>();
+      const runtimeTempDirectories = new Set<string>();
       let closedRuntimes = 0;
       const spawner = ChildProcessSpawner.make(
         Effect.fn("test.spawnAntigravityValidator")(function* (command) {
@@ -342,6 +344,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
           profiles.add(profile);
           const helper = command.args[0] === "-e";
+          const runtimeTemp = command.options.env?.TEMP ?? command.options.env?.TMPDIR;
+          if (!helper && runtimeTemp) runtimeTempDirectories.add(runtimeTemp);
           const output = yield* Queue.unbounded<Uint8Array>();
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
@@ -415,10 +419,17 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           });
         }),
       );
+      const systemTemp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-validate-temp-" });
       const { installation, stagingReleased } = yield* makeHarness({
         previous: true,
         useDefaultValidation: true,
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        platform: "win32",
+        archive: Buffer.from(zipFixtures.windows, "base64"),
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        // Windows unpacks outside the profile, so its removal is not implied.
+        Effect.provideService(HostProcessTempDirectory, systemTemp),
+      );
       yield* installation.start;
       expect((yield* terminalState(installation)).phase).toBe(
         testCase.valid ? "succeeded" : "failed",
@@ -427,8 +438,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(methods).toEqual(["initialize"]);
       expect(closedRuntimes).toBe(1);
       expect(profiles.size).toBe(1);
-      for (const profile of profiles) {
-        expect(yield* fs.exists(profile)).toBe(false);
+      expect(runtimeTempDirectories.size).toBe(1);
+      for (const directory of [...profiles, ...runtimeTempDirectories]) {
+        expect(yield* fs.exists(directory)).toBe(false);
       }
       if (testCase.valid) {
         expect((yield* installation.resolve()).version).toBe("fixture-new");

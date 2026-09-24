@@ -1,6 +1,6 @@
 import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform, HostProcessTempDirectory } from "@t3tools/shared/hostProcess";
 import {
   NodeRuntimeUnavailableError,
   nodeRuntimeUnavailableMessage,
@@ -102,16 +102,27 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
-      const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
+      const platform = yield* HostProcessPlatform;
+      const userHome = resolveAntigravityUserHome(platform, processEnvironment);
       const profileDirectory = resolveAntigravityProfileDirectory(
         serverConfig.stateDir,
         instanceId,
       );
       // No process of this instance exists yet, so every runtime temp
-      // directory left under the profile is an orphan from a killed server.
-      yield* removeAntigravityRuntimeTempDirs(
-        resolveAntigravityRuntimeTempDirectory(profileDirectory),
-      ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+      // directory it owns is an orphan from a killed server. Windows hosts with
+      // long paths enabled unpacked under the profile before the root moved.
+      for (const directory of new Set([
+        resolveAntigravityRuntimeTempDirectory(
+          profileDirectory,
+          platform,
+          yield* HostProcessTempDirectory,
+        ),
+        path.join(profileDirectory, "antigravity-acp", "tmp"),
+      ])) {
+        yield* removeAntigravityRuntimeTempDirs(directory).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+      }
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
         instanceId,
