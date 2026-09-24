@@ -1169,17 +1169,21 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       // session/cancel only stops a prompt. The agent kills its background
       // commands when its session closes, so Stop with nothing else running
       // ends the session, as Claude's does. The next turn resumes it.
-      if (!context.promptFiber && [...context.commands.values()].some((c) => c.promoted)) {
-        return yield* withThreadLock(threadId, stopContext(context));
-      }
-      yield* context.promptLock
+      const idleWithCommands = yield* context.promptLock
         .withPermit(
           Effect.gen(function* () {
+            // Decided under the prompt lock so a turn cannot start in between.
+            if (!context.promptFiber && [...context.commands.values()].some((c) => c.promoted)) {
+              context.stopped = true;
+              return true;
+            }
             yield* cancelRequests(context);
             yield* context.runtime.cancel;
+            return false;
           }),
         )
         .pipe(Effect.mapError((cause) => mapAntigravityError(threadId, "session/cancel", cause)));
+      if (idleWithCommands) yield* withThreadLock(threadId, stopContext(context));
     });
 
   const respondToRequest: Adapter["respondToRequest"] = (threadId, requestId, decision) =>
