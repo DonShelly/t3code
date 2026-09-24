@@ -1202,11 +1202,7 @@ const handleSessionUpdate = ({
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
-        yield* closeActiveAssistantSegment({
-          queue,
-          assistantSegmentRef,
-        });
-        const { merged, decision } = yield* Ref.modify(toolCallsRef, (current) => {
+        const { merged, decision, isNew } = yield* Ref.modify(toolCallsRef, (current) => {
           const tracked = current.get(event.toolCall.toolCallId);
           const previous = tracked?.state;
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
@@ -1228,10 +1224,15 @@ const handleSessionUpdate = ({
               skippedSinceEmit: decision.skippedSinceEmit,
             });
           }
-          return [{ merged: nextToolCall, decision }, next] as const;
+          return [{ merged: nextToolCall, decision, isNew: tracked === undefined }, next] as const;
         });
         if (!decision.emit) {
           continue;
+        }
+        // A new tool call is a boundary in the prose. Progress on a call that
+        // is already shown, such as a background command finishing, is not.
+        if (isNew) {
+          yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {
           _tag: "ToolCallUpdated",
