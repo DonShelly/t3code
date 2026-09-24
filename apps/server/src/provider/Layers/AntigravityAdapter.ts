@@ -1165,6 +1165,13 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
   const interruptTurn: Adapter["interruptTurn"] = (threadId) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
+      // A command that outlived its turn keeps running in the agent, and
+      // session/cancel only stops a prompt. The agent kills its background
+      // commands when its session closes, so Stop with nothing else running
+      // ends the session, as Claude's does. The next turn resumes it.
+      if (!context.promptFiber && [...context.commands.values()].some((c) => c.promoted)) {
+        return yield* withThreadLock(threadId, stopContext(context));
+      }
       yield* context.promptLock
         .withPermit(
           Effect.gen(function* () {
