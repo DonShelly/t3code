@@ -977,7 +977,10 @@ const program = Effect.gen(function* () {
         yield* progress("in_progress", ".");
         yield* say("| x |\n");
         yield* progress("completed", "done");
-        yield* say("| 2 | y |");
+        yield* say("| 2 | y |\n");
+        // Agents can repeat a terminal update after the call finished.
+        yield* progress("completed", "done");
+        yield* say("| 3 | z |");
         return { stopReason: "end_turn" };
       }
 

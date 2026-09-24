@@ -334,6 +334,9 @@ export const make = (
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
+    // Tool calls already shown. A late update to a finished call is not a new
+    // boundary in the answer, although its progress state is gone.
+    const shownToolCallIds = new Set<string>();
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -525,6 +528,7 @@ export const make = (
         modeStateRef,
         configOptionsRef,
         toolCallsRef,
+        shownToolCallIds,
         assistantSegmentRef,
         assistantItemRuntimeId,
         params: notification,
@@ -1178,6 +1182,7 @@ const handleSessionUpdate = ({
   modeStateRef,
   configOptionsRef,
   toolCallsRef,
+  shownToolCallIds,
   assistantSegmentRef,
   assistantItemRuntimeId,
   params,
@@ -1186,6 +1191,7 @@ const handleSessionUpdate = ({
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
+  readonly shownToolCallIds: Set<string>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
@@ -1202,7 +1208,7 @@ const handleSessionUpdate = ({
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
-        const { merged, decision, isNew } = yield* Ref.modify(toolCallsRef, (current) => {
+        const { merged, decision } = yield* Ref.modify(toolCallsRef, (current) => {
           const tracked = current.get(event.toolCall.toolCallId);
           const previous = tracked?.state;
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
@@ -1224,14 +1230,15 @@ const handleSessionUpdate = ({
               skippedSinceEmit: decision.skippedSinceEmit,
             });
           }
-          return [{ merged: nextToolCall, decision, isNew: tracked === undefined }, next] as const;
+          return [{ merged: nextToolCall, decision }, next] as const;
         });
         if (!decision.emit) {
           continue;
         }
         // A new tool call is a boundary in the prose. Progress on a call that
         // is already shown, such as a background command finishing, is not.
-        if (isNew) {
+        if (!shownToolCallIds.has(merged.toolCallId)) {
+          shownToolCallIds.add(merged.toolCallId);
           yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {
