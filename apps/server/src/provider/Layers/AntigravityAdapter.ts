@@ -1189,7 +1189,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           // interrupted, or it is left unreachable with its commands running.
           Effect.ensuring(
             Effect.suspend(() =>
-              idleWithCommands ? withThreadLock(threadId, stopContext(context)) : Effect.void,
+              idleWithCommands
+                ? withThreadLock(threadId, stopContext(context)).pipe(Effect.ignore)
+                : Effect.void,
             ),
           ),
         );
