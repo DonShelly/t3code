@@ -269,7 +269,7 @@ export function SnapShotSetupDialog({
                       {
                         id: "screenRecording",
                         icon: (
-                          <MacScreenRecordingIcon className="size-8 shrink-0 drop-shadow-[0_1px_1px_#0005]" />
+                          <MacScreenRecordingIcon className="size-8 shrink-0 drop-shadow-sm" />
                         ),
                         title: "Screen Recording",
                         description: "Capture the window you're using.",
@@ -279,7 +279,7 @@ export function SnapShotSetupDialog({
                       {
                         id: "accessibility",
                         icon: (
-                          <MacAccessibilityIcon className="size-8 shrink-0 drop-shadow-[0_1px_1px_#0005]" />
+                          <MacAccessibilityIcon className="size-8 shrink-0 drop-shadow-sm" />
                         ),
                         title: "Accessibility",
                         description: includeAccessibility
