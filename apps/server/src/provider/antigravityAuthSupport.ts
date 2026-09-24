@@ -312,6 +312,8 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   /** Home the agent expands `~` against. Defaults to the launch environment's. */
   readonly userHome?: string;
+  /** Parent of per-process temp directories. Defaults to the instance's root. */
+  readonly tempDirectory?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
@@ -349,11 +351,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
-  const tempDirectory = resolveAntigravityRuntimeTempDirectory(
-    geminiHome,
-    platform,
-    yield* HostProcessTempDirectory,
-  );
+  const tempDirectory =
+    input.tempDirectory ??
+    resolveAntigravityRuntimeTempDirectory(geminiHome, platform, yield* HostProcessTempDirectory);
   const profile: AntigravityProfile = {
     platform,
     geminiHome,

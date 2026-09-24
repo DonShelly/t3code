@@ -5,6 +5,7 @@ import {
   HostProcessArchitecture,
   HostProcessEnvironment,
   HostProcessPlatform,
+  HostProcessTempDirectory,
 } from "@t3tools/shared/hostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
@@ -287,6 +288,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     `${platform}-${arch}`,
   );
   const versionsDirectory = path.join(managedDirectory, "versions");
+  const systemTempDirectory = yield* HostProcessTempDirectory;
+  // Servers with different homes validate in parallel without sharing a root.
+  const validationTempName = `validate-${NodeCrypto.createHash("sha256")
+    .update(managedDirectory)
+    .digest("hex")
+    .slice(0, 12)}`;
   const activePath = path.join(managedDirectory, "active.json");
   const gate = yield* Semaphore.make(1);
   const leases = new Map<string, number>();
@@ -472,16 +479,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         const profileDirectory = yield* fs.makeTempDirectoryScoped({
           prefix: "t3-antigravity-validate-",
         });
+        // Short enough for Windows' path limit, and fixed per install root so
+        // a removal that fails here is swept by the next validation.
+        const tempDirectory = path.join(systemTempDirectory, "t3-agy", validationTempName);
+        const removeTemp = fs
+          .remove(tempDirectory, { recursive: true, force: true })
+          .pipe(Effect.ignore);
+        yield* removeTemp;
+        yield* Effect.addFinalizer(() => removeTemp);
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           platform,
           baseEnv: environment,
+          tempDirectory,
         });
-        // Windows keeps runtime temp outside the profile. Remove it after the
-        // process exits; this profile, and so its temp directory, is unique.
-        yield* Effect.addFinalizer(() =>
-          fs.remove(profile.tempDirectory, { recursive: true, force: true }).pipe(Effect.ignore),
-        );
         const runtime = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
