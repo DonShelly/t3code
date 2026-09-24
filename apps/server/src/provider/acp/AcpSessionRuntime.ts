@@ -40,6 +40,8 @@ import {
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
 
+const MAX_SHOWN_TOOL_CALL_IDS = 256;
+
 interface AcpToolCallTrackedState {
   readonly state: AcpToolCallState;
   readonly lastEmittedDetailLength: number | undefined;
@@ -334,7 +336,7 @@ export const make = (
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
-    // Tool calls already shown. A late update to a finished call is not a new
+    // Recently shown tool calls. A late update to a finished call is not a new
     // boundary in the answer, although its progress state is gone.
     const shownToolCallIds = new Set<string>();
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
@@ -1239,6 +1241,10 @@ const handleSessionUpdate = ({
         // is already shown, such as a background command finishing, is not.
         if (!shownToolCallIds.has(merged.toolCallId)) {
           shownToolCallIds.add(merged.toolCallId);
+          // Only recent calls get late updates; keep a long session bounded.
+          if (shownToolCallIds.size > MAX_SHOWN_TOOL_CALL_IDS) {
+            shownToolCallIds.delete(shownToolCallIds.values().next().value!);
+          }
           yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {
