@@ -1210,7 +1210,7 @@ const handleSessionUpdate = ({
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
-        const { merged, decision } = yield* Ref.modify(toolCallsRef, (current) => {
+        const { merged, decision, active } = yield* Ref.modify(toolCallsRef, (current) => {
           const tracked = current.get(event.toolCall.toolCallId);
           const previous = tracked?.state;
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
@@ -1232,7 +1232,7 @@ const handleSessionUpdate = ({
               skippedSinceEmit: decision.skippedSinceEmit,
             });
           }
-          return [{ merged: nextToolCall, decision }, next] as const;
+          return [{ merged: nextToolCall, decision, active: tracked !== undefined }, next] as const;
         });
         if (!decision.emit) {
           continue;
@@ -1245,7 +1245,8 @@ const handleSessionUpdate = ({
           if (shownToolCallIds.size > MAX_SHOWN_TOOL_CALL_IDS) {
             shownToolCallIds.delete(shownToolCallIds.values().next().value!);
           }
-          yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
+          // A call still running is already on screen, even if it aged out.
+          if (!active) yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {
           _tag: "ToolCallUpdated",
