@@ -630,6 +630,38 @@ try {
 }
 NODE
 }
+# A background service (\`t3 service install\`) owns this T3 home and brings its
+# own server back after a restart or self-update. A server started here in that
+# gap would take the home, and the service could not start again. The path
+# prefix scopes the match to this home; a ps that rejects -A finds nothing
+# and keeps the old behaviour.
+service_launcher_running() (
+  ps -A -o args= 2>/dev/null | {
+    while IFS= read -r SERVICE_ARGS; do
+      case "$SERVICE_ARGS" in
+        "$DEFAULT_SERVER_HOME"/runtime/versions/*/t3" __service-launcher"*) exit 0 ;;
+      esac
+    done
+    exit 1
+  }
+)
+# The deadline is checked between passes, so a final probe and sleep can run
+# a few seconds past it; the SSH launch timeout leaves room for that.
+wait_for_service_server() {
+  SERVICE_WAIT_UNTIL=$(($(date +%s) + @@T3_SERVICE_WAIT_SECONDS@@))
+  while [ "$(date +%s)" -lt "$SERVICE_WAIT_UNTIL" ]; do
+    SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    if [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      REMOTE_PORT="\${SERVICE_RUNTIME_INFO#* }"
+      if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+        return 0
+      fi
+      REMOTE_PORT=""
+    fi
+    sleep 1
+  done
+  return 1
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -637,6 +669,7 @@ DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
 ADOPTED_PID=""
+REPLACING_OWN_SERVER=0
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
@@ -693,6 +726,7 @@ elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PI
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
+    REPLACING_OWN_SERVER=1
   elif ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
     exit 1
@@ -701,6 +735,19 @@ else
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
+fi
+# A server this script replaces held the home, so a service launcher beside it
+# was refused and stays idle; only a replacement keeps this connection working.
+if [ -z "$REMOTE_PORT" ] && [ "$REPLACING_OWN_SERVER" -eq 0 ] && service_launcher_running; then
+  if ! wait_for_service_server; then
+    printf 'The T3 background service on this host owns its T3 home, but its server did not answer on 127.0.0.1 within @@T3_SERVICE_WAIT_SECONDS@@ seconds. Retry the connection; if it stays down, run \`t3 service status\` or \`t3 service restart\` on the host. No other server was started.\\n' >&2
+    exit 1
+  fi
+  REMOTE_PID=""
+  REMOTE_MANAGED="external"
+  rm -f "$PID_FILE"
+  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf 'external\\n' >"$MANAGED_FILE"
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
@@ -836,7 +883,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
@@ -848,6 +895,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    T3_SERVICE_WAIT_SECONDS: String(REMOTE_READY_TIMEOUT_MS / 1_000),
   });
 }
 

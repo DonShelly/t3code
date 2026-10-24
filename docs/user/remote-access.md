@@ -179,7 +179,11 @@ ssh user@example.com 'sh -lc "command -v claude codex"'
 
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that T3 Code launched; a server that was already
-running is left alone.
+running is left alone. When the host runs the
+[background service](./background-service.md), T3 Code uses the service's server
+instead of starting its own. While the service restarts or updates, the
+connection waits up to a minute for it; if it does not come back, the connection
+fails and points you to `t3 service restart`.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
